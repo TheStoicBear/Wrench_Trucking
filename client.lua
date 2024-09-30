@@ -1,222 +1,161 @@
-local jobTypes = {
-    {
-        trailer = `17fontainev2`, -- Trailer Model
-        truck = {model=`9000cl`, spawnCoords=vector4(2046.99, 4916.51, 43.65, 44.66)}, -- Delete this line if you dont want a truck spawn
-        trailerSpawn = vector4(2024.32, 4934.19, 43.64, 132.23), -- optional (Meant for cars)
-        finishcoords = {
-            vector4(57.59, 6298.02, 31.28, 121.35),
-            vector4(2675.88, 1449.37, 24.50, 178.80),
-            vector4(477.85, 2797.39, 41.93, 89.76)
-        },
-        jobvalue = 10000,
-        randomextra = true
-    },
-    {
-        trailer = `17fontainev4`, -- Trailer Model
-        truck = {model=`t680`, spawnCoords=vector4(2046.99, 4916.51, 43.65, 44.66)}, -- Delete this line if you dont want a truck spawn
-        trailerSpawn = vector4(2024.32, 4934.19, 43.64, 132.23), -- optional (Meant for cars)
-        finishcoords = {
-            vector4(57.59, 6298.02, 31.28, 121.35),
-            vector4(2675.88, 1449.37, 24.50, 178.80),
-            vector4(477.85, 2797.39, 41.93, 89.76)
-        },
-        jobvalue = 10000,
-        randomextra = true
-    },
-}
+-- Load configuration
+local Config = require 'config'
 
+-- Variable to store the trailer used in the job
+local currentTrailer = nil
+local trailerDetached = true -- State variable to prevent spam notifications
 
+-- Function to check if there is a Class 20 vehicle near the player
+local function isNearClass20Vehicle(radius)
+    local playerPed = PlayerPedId()
+    local playerCoords = GetEntityCoords(playerPed)
 
-local desk_prop = `prop_laptop_01a`
-local desk_coords = vector4(2057.33, 4919.13, 43.82, 300.81)
-
-while not HasModelLoaded(desk_prop) do
-    Wait(100)
-    RequestModel(desk_prop)
-end
-
-local desk = CreateObject(desk_prop, desk_coords, false, true, false)
-SetModelAsNoLongerNeeded(desk_prop)
-FreezeEntityPosition(desk, true)
-
-local blip = AddBlipForEntity(desk)
-SetBlipSprite(blip, 374)  -- Set a small blip icon
-SetBlipColour(blip, 6)  -- Set color to yellow
-SetBlipAsShortRange(blip, true)
-BeginTextCommandSetBlipName("STRING")
-AddTextComponentString("Trucking Job")
-EndTextCommandSetBlipName(blip)
-
-
-local blips = {}
--- Function to create a blip for a vehicle and remove it once the player is close
-local function createBlipForVehicle(vehicle, label, sprite)
-    local blip = AddBlipForEntity(vehicle)
-    SetBlipSprite(blip, sprite)  -- Set a small blip icon
-    SetBlipColour(blip, 6)  -- Set color to yellow
-    SetBlipAsShortRange(blip, true)
-    BeginTextCommandSetBlipName("STRING")
-    AddTextComponentString(label)
-    EndTextCommandSetBlipName(blip)
-    blips[#blips+1] = blip
-end
-
-local function clearblips()
-    for _, blip in pairs(blips) do
-        if DoesBlipExist(blip) then
-            RemoveBlip(blip)
+    -- Find the closest vehicle to the player within the given radius
+    local vehicle = GetClosestVehicle(playerCoords.x, playerCoords.y, playerCoords.z, radius, 0, 70) -- 70 checks all vehicle classes
+    if vehicle ~= 0 then
+        local vehicleClass = GetVehicleClass(vehicle)
+        if vehicleClass == 20 then
+            return true, vehicle -- Return true and the vehicle if it's a Class 20 vehicle
         end
     end
+    return false, nil -- Return false if no Class 20 vehicle is found
 end
 
+-- Function to check if the trailer is attached to the vehicle
+local function isTrailerAttached(vehicle)
+    local isAttached, trailer = GetVehicleTrailerVehicle(vehicle)
+    return isAttached, trailer
+end
+
+-- Function to calculate distance and payout
+local function calculatePayout(endCoords)
+    local playerPed = PlayerPedId()
+    local playerCoords = GetEntityCoords(playerPed)
+
+    -- Calculate distance using GetDistanceBetweenCoords
+    local distance = GetDistanceBetweenCoords(playerCoords.x, playerCoords.y, playerCoords.z, endCoords.x, endCoords.y, endCoords.z, true)
+
+    -- Convert distance from meters to miles (1 mile = 1609.34 meters)
+    local distanceInMiles = distance / 1609.34
+
+    -- Calculate payout based on distance
+    local payout = math.floor(distanceInMiles * Config.cpmRate * Config.cpmMultiplier) -- Calculate payout in cents
+
+    return distanceInMiles, payout
+end
+
+-- Function to start job (without spawning trailers or trucks)
 local function startJob()
+    local radius = Config.checkRadius -- Set the radius for checking nearby Class 20 vehicles
+    local isNearby, trailer = isNearClass20Vehicle(radius)
+
+    if not isNearby then
+        lib.notify({
+            title = "Wrench Trucking",
+            description = "You must be near a Class 20 vehicle to start this job!",
+            type = "error"
+        })
+        return
+    end
+
+    -- Store the trailer being used in the job
+    currentTrailer = trailer
+
     lib.notify({
         title = "Wrench Trucking",
-        description = "Your Job is being prepared."
+        description = "Your job is being prepared. Drive to the marked destination.",
+        type = "success"
     })
-    Wait(10000)
-    local truck, cars
-    local jobtype = jobTypes[math.random(1, #jobTypes)]
-    while not HasModelLoaded(jobtype.trailer) do
-        RequestModel(jobtype.trailer)
-        Wait(0)
-    end
-        
 
-    if jobtype.truck then
-        while not HasModelLoaded(jobtype.truck.model) do
-            RequestModel(jobtype.truck.model)
-            Wait(0)
-        end
-        truck = CreateVehicle(jobtype.truck.model, jobtype.truck.spawnCoords, true, false)
-        createBlipForVehicle(truck, "Truck", 477)  
-    end
+    -- Select a random contract (finish destination)
+    local jobContract = Config.jobContracts[math.random(1, #Config.jobContracts)]
+    local endcoords = jobContract.finishcoords[math.random(1, #jobContract.finishcoords)]
 
-    if jobtype.cargo then
-        cars = {}
-        for _, obj in pairs(jobtype.cargo) do
-            while not HasModelLoaded(obj.carModel) do
-                RequestModel(obj.carModel)
-                Wait(0)
-            end
-            local car = CreateVehicle(obj.carModel, obj.spawncoords, true, false)
-            cars[#cars+1] = car
-            createBlipForVehicle(car, "Cargo Vehicle", 568)  
-        end
-    end
+    -- Calculate the estimated mileage and payout
+    local estimatedMiles, estimatedPayout = calculatePayout(endcoords)
 
-
-    local trailer = CreateVehicle(jobtype.trailer, jobtype.trailerSpawn, true, false)
-    createBlipForVehicle(trailer, "Trailer", 479) 
-    if jobtype.randomextra then
-        for i=1, 9 do
-            SetVehicleExtra(trailer, i, true)
-        end
-        SetVehicleExtra(trailer, math.random(1, 9), false)
-    end
-    local requiredvehicles = {}
+    -- Display estimated mileage and payout
     lib.notify({
         title = "Wrench Trucking",
-        description = "Your Job is now ready!"
+        description = string.format("Estimated Mileage: %.2f miles\nEstimated Payout: $%.2f", estimatedMiles, estimatedPayout / 100), -- Convert cents to dollars
+        type = "info"
     })
-    if trailer then
-        requiredvehicles.trailer = {true, trailer}
-    end
-    if truck then
-        requiredvehicles.truck = {true, truck}
-    end
-    if cars then
-        requiredvehicles.cars = {true, cars}
-    end
-    local endcoords = jobtype.finishcoords[math.random(1, #jobtype.finishcoords)]
-    local completevehicles = {}
-    for _, i in pairs(requiredvehicles) do
-        completevehicles[#completevehicles+1] = {false, i[2]}
-    end
+
+    -- Set a waypoint to the finish coordinates
     SetNewWaypoint(endcoords.x, endcoords.y)
+
+    -- Create a zone at the finish coordinates
     local zone = lib.zones.box({
         coords = endcoords,
         inside = function(self)
-            if IsControlPressed(1, 86) then
-                for _, haul in pairs(requiredvehicles) do
-                    if haul[1] == true and type(haul[2]) ~= "table" then
-                        if GetDistanceBetweenCoords(GetEntityCoords(haul[2]), endcoords, true) < 10 then
-                            for _, veh in pairs(completevehicles) do
-                                if veh[2] == haul[2] then
-                                    veh[1] = true
-                                end
-                            end
-                        end
-                    elseif haul[1] == true and type(haul[2]) == "table" then
-                        local compcars = {}
-                        -- First loop: Populate compcars if they are within 30 units of endcoords
-                        for id, car in pairs(haul[2]) do
-                            local carCoords = GetEntityCoords(car)
-                            local distance = GetDistanceBetweenCoords(carCoords, endcoords, true)
-                            
-                            if distance < 10 then
-                                compcars[#compcars+1] = car
-                            end
-                        end
-                        -- Second loop: Check if vehicles in completevehicles are in compcars
-                        for _, veh in pairs(completevehicles) do
-                            if type(veh[2]) == "table" then
-                                if #veh[2] == #compcars then
-                                    
-                                    veh[1] = true
-                                end
-                            end
-                        end
-                    end
+            local playerVehicle = GetVehiclePedIsIn(PlayerPedId(), false)
+
+            -- Check if the trailer is still attached
+            local isAttached, trailer = isTrailerAttached(playerVehicle)
+            if isAttached then
+                -- Show notification only once
+                if trailerDetached then
+                    lib.notify({
+                        title = "Wrench Trucking",
+                        description = "Detach the trailer before completing the job!",
+                        type = "error"
+                    })
+                    trailerDetached = false -- Set to false to prevent spam
                 end
-                local completedcount = 0
-                for _, vehicle in pairs(completevehicles) do
-                    if vehicle[1] == true then
-                        completedcount += 1
-                    end
+                return
+            else
+                trailerDetached = true -- Reset when trailer is detached
+            end
+
+            if IsControlPressed(1, 86) then -- E key to complete the job
+                lib.notify({
+                    title = "Wrench Trucking",
+                    description = "Job Completed! You've earned $" .. (jobContract.jobvalue + estimatedPayout / 100),
+                    type = "success"
+                })
+
+                -- Trigger server event to reward the player
+                TriggerServerEvent("Wrench_Trucking:JobComplete", jobContract.jobvalue + estimatedPayout / 100) -- Add payout to the job value
+
+                -- Delete the trailer after job completion
+                if currentTrailer then
+                    DeleteVehicle(currentTrailer) -- Delete the trailer, not the player’s vehicle
+                    currentTrailer = nil -- Clear the trailer reference
                 end
 
-                if completedcount == #completevehicles then
-                    lib.notify({
-                        title = "Wrench Trucking",
-                        description = "Job Completed! You're good to go!"
-                    })
-                    clearblips()
-                    self:remove()
-                    TriggerServerEvent("Wrench_Trucking:JobComplete", jobtype.jobvalue)
-                    DeleteVehicle(requiredvehicles.trailer[2])
-                    for _, haul in pairs(requiredvehicles) do
-                        if type(haul[2]) == "table" then
-                            for _, vehicle in pairs(haul[2]) do
-                                DeleteVehicle(vehicle)
-                            end
-                        end
-                    end
-                else
-                    lib.notify({
-                        title = "Wrench Trucking",
-                        description = "Please align your cargo better"
-                    })
-                end
-                Wait(1000)
+                -- Remove the zone after job completion
+                self:remove()
             end
         end,
         onEnter = function(self)
-           lib.notify({
-            title = "Wrench Trucking",
-            description = "Press E when you are lined up."
-           })
+            lib.notify({
+                title = "Wrench Trucking",
+                description = "Press E to complete the job when aligned properly.",
+                type = "info"
+            })
         end,
-        debug = true,
         size = vector3(5, 20, 10),
         rotation = endcoords.w
     })
 end
 
+-- Add ox_target to make trailers targetable if near Class 20 vehicle
+for _, trailerModel in ipairs(Config.trailers) do
+    exports.ox_target:addModel(trailerModel, {
+        label = "Start Job",
+        onSelect = function()
+            local radius = Config.checkRadius -- Define radius to check for nearby Class 20 vehicles
+            local isNearby = isNearClass20Vehicle(radius)
 
-exports.ox_target:addLocalEntity(desk, {
-    label = "Start Trucking Job",
-    onSelect = function()
-        startJob()
-    end
-})
+            if isNearby then
+                startJob() -- Start the job if the player is near a Class 20 vehicle
+            else
+                lib.notify({
+                    title = "Wrench Trucking",
+                    description = "You must be near a Class 20 vehicle to start this job.",
+                    type = "error"
+                })
+            end
+        end
+    })
+end
