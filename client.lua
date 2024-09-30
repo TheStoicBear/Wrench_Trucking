@@ -1,5 +1,4 @@
--- Load configuration
-local Config = require 'config'
+
 
 -- Variable to store the trailer used in the job
 local currentTrailer = nil
@@ -71,6 +70,9 @@ local function startJob()
     local jobContract = Config.jobContracts[math.random(1, #Config.jobContracts)]
     local endcoords = jobContract.finishcoords[math.random(1, #jobContract.finishcoords)]
 
+    -- Print the finish coordinates to the console
+    print(string.format("Finish Coordinates: x = %.2f, y = %.2f, z = %.2f, w = %.2f", endcoords.x, endcoords.y, endcoords.z, endcoords.w))
+
     -- Calculate the estimated mileage and payout
     local estimatedMiles, estimatedPayout = calculatePayout(endcoords)
 
@@ -87,46 +89,47 @@ local function startJob()
     -- Create a zone at the finish coordinates
     local zone = lib.zones.box({
         coords = endcoords,
-        inside = function(self)
-            local playerVehicle = GetVehiclePedIsIn(PlayerPedId(), false)
+inside = function(self)
+    local playerVehicle = GetVehiclePedIsIn(PlayerPedId(), false)
 
-            -- Check if the trailer is still attached
-            local isAttached, trailer = isTrailerAttached(playerVehicle)
-            if isAttached then
-                -- Show notification only once
-                if trailerDetached then
-                    lib.notify({
-                        title = "Wrench Trucking",
-                        description = "Detach the trailer before completing the job!",
-                        type = "error"
-                    })
-                    trailerDetached = false -- Set to false to prevent spam
-                end
-                return
-            else
-                trailerDetached = true -- Reset when trailer is detached
-            end
+    -- Check if the trailer is still attached
+    local isAttached, trailer = isTrailerAttached(playerVehicle)
+    if isAttached then
+        -- Show notification only once
+        if trailerDetached then
+            lib.notify({
+                title = "Wrench Trucking",
+                description = "Detach the trailer before completing the job!",
+                type = "error"
+            })
+            trailerDetached = false -- Set to false to prevent spam
+        end
+        return
+    else
+        trailerDetached = true -- Reset when trailer is detached
+    end
 
-            if IsControlPressed(1, 86) then -- E key to complete the job
-                lib.notify({
-                    title = "Wrench Trucking",
-                    description = "Job Completed! You've earned $" .. (jobContract.jobvalue + estimatedPayout / 100),
-                    type = "success"
-                })
+    if IsControlPressed(1, 86) then -- E key to complete the job
+        lib.notify({
+            title = "Wrench Trucking",
+            description = "Job Completed! You've earned $" .. (jobContract.jobvalue + estimatedPayout / 100),
+            type = "success"
+        })
 
-                -- Trigger server event to reward the player
-                TriggerServerEvent("Wrench_Trucking:JobComplete", jobContract.jobvalue + estimatedPayout / 100) -- Add payout to the job value
+        -- Trigger server event to reward the player
+        TriggerServerEvent("Wrench_Trucking:JobComplete", jobContract.jobvalue + estimatedPayout / 100) -- Add payout to the job value
 
-                -- Delete the trailer after job completion
-                if currentTrailer then
-                    DeleteVehicle(currentTrailer) -- Delete the trailer, not the player’s vehicle
-                    currentTrailer = nil -- Clear the trailer reference
-                end
+        -- Delete the trailer after job completion
+        if trailer then -- Use the trailer retrieved from isTrailerAttached
+            DeleteVehicle(trailer) -- Delete only the trailer
+            currentTrailer = nil -- Clear the trailer reference
+        end
 
-                -- Remove the zone after job completion
-                self:remove()
-            end
-        end,
+        -- Remove the zone after job completion
+        self:remove()
+    end
+end,
+
         onEnter = function(self)
             lib.notify({
                 title = "Wrench Trucking",
